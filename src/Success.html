@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'DM Sans', 'Segoe UI', sans-serif;
+      background: #f0f2f5;
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh; padding: 24px;
+    }
+    .card {
+      background: #fff; border-radius: 16px;
+      box-shadow: 0 6px 28px rgba(0,0,0,.08);
+      text-align: center; padding: 48px 40px; max-width: 500px; width: 100%;
+    }
+    .icon {
+      width: 72px; height: 72px; background: #e6f4ea; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 24px;
+    }
+    .icon svg { width: 36px; height: 36px; stroke: #1e8e3e; fill: none; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+    h1 { font-size: 24px; color: #1f1f1f; margin-bottom: 8px; }
+    .id-box {
+      background: #f4f4ff; border: 1.5px solid #d0d1f0; border-radius: 10px;
+      padding: 14px 20px; margin: 20px 0;
+    }
+    .id-lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 1.2px; color: #5f6368; font-weight: 700; margin-bottom: 4px; }
+    .id-val { font-size: 22px; font-weight: 700; color: #222595; letter-spacing: .5px; }
+    p { font-size: 14px; color: #5f6368; line-height: 1.6; margin-bottom: 24px; }
+    .btn {
+      display: inline-block; padding: 12px 32px;
+      font-size: 14px; font-weight: 600; font-family: inherit;
+      color: #222595; background: #e8e9fe;
+      border: none; border-radius: 10px; cursor: pointer;
+      text-decoration: none; transition: background .2s;
+    }
+    .btn:hover { background: #d0d1f0; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <div class="icon"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg></div>
+  <h1>Application Submitted!</h1>
+  <? if (applicationId) { ?>
+  <div class="id-box">
+    <div class="id-lbl">Your Application ID</div>
+    <div class="id-val"><?= applicationId ?></div>
+  </div>
+  <? } ?>
+  <p>Thank you for applying. Your application and resume have been recorded. Our team will review your details and reach out to you.</p>
+  <button class="btn" onclick="try{window.top.location.reload()}catch(e){try{window.parent.location.reload()}catch(e2){window.location.reload()}}">Submit Another Application</button>
+</div>
+</body>
+</html>

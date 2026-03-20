@@ -1,0 +1,18 @@
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+
+# clasp (if used later)
+.clasp.json
+.clasprc.json
+
+# Node (if used later)
+node_modules/
+
+# Secrets - never commit actual keys
+# (CONFIG values in Code.gs are blank by default; secrets go in Script Properties)

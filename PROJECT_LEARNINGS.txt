@@ -1,0 +1,484 @@
+================================================================================
+HIRING FORM PROJECT — LEARNINGS & KNOWLEDGE BASE
+================================================================================
+Project: Dynamic Hiring Form (Google Apps Script)
+Platform: Google Apps Script (Web App) + Google Sheets + Google Drive
+Date: March 2026
+================================================================================
+
+
+TABLE OF CONTENTS
+─────────────────
+1. Architecture Overview
+2. Google Apps Script Gotchas
+3. Distance Calculator — Every Lesson Learned
+4. Google Maps API — Indian Address Issues
+5. Security Implementation
+6. Shared Drive Compatibility
+7. Print Functionality
+8. UI/UX Decisions & Fixes
+9. iframe Sandbox Issues (Apps Script)
+10. File Upload in Apps Script
+11. Sheet Column Layout & Data Flow
+12. Deployment Checklist
+13. Common Bugs & Their Fixes
+14. API Key Management
+
+
+================================================================================
+1. ARCHITECTURE OVERVIEW
+================================================================================
+
+- Web app served via Google Apps Script HtmlService
+- Google Sheet (can be in a Shared Drive) as database
+- Google Drive (Shared Drive) for resume storage
+- Google Maps APIs for distance calculation and address autocomplete
+- No external backend — everything runs on Google infrastructure
+
+Files:
+  - Code.gs       → Server-side Apps Script (all business logic)
+  - Form.html     → Main form UI (complete SPA with inline success screen)
+  - Success.html   → Fallback success page (rarely used, for direct URL access)
+
+Key Design Decision: The success screen is rendered INLINE by replacing
+mainBody.innerHTML, NOT by navigating to a separate page. This avoids
+iframe navigation issues entirely.
+
+
+================================================================================
+2. GOOGLE APPS SCRIPT GOTCHAS
+================================================================================
+
+2.1 HtmlService iframe Sandbox
+  - Apps Script serves HTML inside a sandboxed iframe
+  - window.top.location.href = '...' is BLOCKED by the sandbox
+  - window.location.reload() works but only reloads the iframe, not the parent
+  - Solution: Use try/catch cascade:
+      try { window.top.location.reload() }
+      catch(e) { try { window.parent.location.reload() }
+      catch(e2) { window.location.reload() } }
+
+2.2 google.script.run Behavior
+  - Calls are asynchronous — must use withSuccessHandler/withFailureHandler
+  - If the server function throws, withFailureHandler receives the error
+  - If the server function returns null/undefined, withSuccessHandler still fires
+  - Cannot pass DOM elements or functions as arguments
+  - File data must be passed as base64 strings
+
+2.3 Template vs Output
+  - createHtmlOutputFromFile() → static HTML, no server-side templating
+  - createTemplateFromFile() → supports <? ?> scriptlets
+  - Form.html uses Output (no templating needed, all dynamic via JS)
+  - Success.html uses Template (needs applicationId passed from server)
+
+2.4 Script Properties vs CONFIG
+  - PropertiesService.getScriptProperties() persists across deployments
+  - CONFIG object is visible to anyone with editor access to the script
+  - Best practice: Store secrets in Script Properties, use CONFIG as fallback
+  - Run initializeSecrets() once, then clear values from source code
+
+
+================================================================================
+3. DISTANCE CALCULATOR — EVERY LESSON LEARNED
+================================================================================
+
+This was the single most complex and bug-prone feature. Here's everything:
+
+3.1 Button Enable/Disable Logic
+  WRONG: Disable button unless BOTH address AND location are selected
+  RIGHT: Enable button whenever address has text. Check location inside
+         calcDist() and show a friendly alert if missing.
+  WHY:   Users often type address first, then select location. A disabled
+         button with no explanation is confusing.
+
+3.2 Autocomplete Suggestion Selection
+  WRONG: Use 'click' event on suggestion list items
+  RIGHT: Use 'mousedown' event with preventDefault() and stopPropagation()
+  WHY:   The document-level click handler (for hiding suggestions) fires
+         at the same time as the suggestion click, causing a race condition.
+         mousedown fires BEFORE blur/click, preventing the dropdown from
+         closing before the selection registers.
+
+3.3 Programmatic Value Setting
+  PROBLEM: Setting input.value via JavaScript does NOT trigger 'input' event
+  SOLUTION: After setting $('fAddr').value = '...', explicitly call
+            updateCalcBtn() to re-check button state
+  ALSO:    Add 'paste' and 'focus' event listeners as additional triggers
+
+3.4 State Machine Design
+  States: IDLE → LOADING → SUCCESS / MANUAL / ERROR
+  - IDLE: Button enabled, waiting for click
+  - LOADING: Button disabled, progress bar visible, timers running
+  - SUCCESS: Distance shown, map shown, resolved addresses shown
+  - MANUAL: Manual input visible with job location address
+  - ERROR: Same as MANUAL (graceful degradation)
+
+3.5 Timer Management
+  CRITICAL: Always clean up timers on EVERY state transition
+  - Use a central _distTimers object: { prog: null, failsafe: null }
+  - cleanupDistTimers() clears both and nullifies references
+  - Call cleanupDistTimers() at the START of calcDist() (in case user
+    clicks Calculate while a previous calculation is still running)
+
+3.6 Failsafe Timeout
+  - 15 seconds is the sweet spot (Google's API typically responds in 2-5s)
+  - 30 seconds is too long — users get impatient
+  - On timeout: show manual fallback, re-enable button, clean up timers
+  - Use a timedOut flag to ignore late server responses
+
+3.7 Manual Fallback
+  - ALWAYS show the Job Location address (fetched via getOfficeAddressForLocation)
+  - Show immediately when: no Maps API key, timeout, server error, API failure
+  - Pre-fetch the office address when location is selected (not when fallback
+    is triggered) for instant display
+
+3.8 No Maps API Key Scenario
+  WRONG: Hide the Calculate button with display:none
+  RIGHT: Show manual fallback immediately, keep button visible
+  WHY:   If button is hidden, user can never trigger calcDist() which
+         contains the logic to show manual fallback with job location
+
+3.9 Recalculation
+  - When location changes: reset ALL distance state (dk, fDK, map, legend,
+    resolved addresses, manual fallback, timers, state)
+  - When address changes: hide resolved addresses (they're stale)
+  - Calculate button should work for unlimited retries
+
+
+================================================================================
+4. GOOGLE MAPS API — INDIAN ADDRESS ISSUES
+================================================================================
+
+4.1 Geocoding Inaccuracy
+  - Google Distance Matrix API geocodes address TEXT to coordinates
+  - For Indian addresses, Google often resolves to the WRONG location
+  - Example: "City Walk Mall, Saket" might resolve to a different "City Walk"
+  - This causes wildly inaccurate distances (100m showing as 13 KM)
+
+4.2 Solution: Transparency + Manual Override
+  - Show "resolved addresses" (what Google actually interpreted)
+  - Extracted from json.origin_addresses[0] and json.destination_addresses[0]
+  - Display both resolved addresses after calculation
+  - Provide "Distance seems wrong? Enter manually" link
+  - Manual override pre-fills with calculated value for easy adjustment
+
+4.3 Static Maps for Print
+  - JavaScript Maps don't render in print windows
+  - Use Google Maps Static API: a plain <img> tag with URL parameters
+  - URL format: https://maps.googleapis.com/maps/api/staticmap?...
+  - Requires Maps Static API enabled in Google Cloud Console
+  - The mapsApiKey variable on the client may be empty when print is triggered
+  - Solution: Always fetch key fresh from server before opening print window
+
+4.4 Required Google Cloud APIs
+  - Maps JavaScript API (for autocomplete + interactive map on form)
+  - Places API (for AutocompleteService)
+  - Distance Matrix API (for server-side distance calculation)
+  - Maps Static API (for print version maps)
+  - Geocoding API (for map pin placement)
+
+4.5 API Key Restrictions (IMPORTANT)
+  In Google Cloud Console, restrict your key:
+  - HTTP referrer: your deployed Apps Script URL pattern
+  - API restrictions: limit to only the 5 APIs above
+
+
+================================================================================
+5. SECURITY IMPLEMENTATION
+================================================================================
+
+5.1 Passkey Storage
+  - NEVER hardcode passkeys in client-side HTML
+  - Store in Script Properties via PropertiesService
+  - getPasskey_() reads from Script Properties, falls back to CONFIG
+  - Run initializeSecrets() once to migrate, then clear source code
+
+5.2 Resume Access Token
+  - On submission, server generates UUID token via Utilities.getUuid()
+  - Stored in CacheService for 1 hour
+  - Client uses this token to access resume WITHOUT needing the passkey
+  - Prevents passkey from ever appearing in Form.html source code
+
+5.3 Rate Limiting
+  - Max 5 retrieve attempts per minute per session
+  - Uses CacheService with Session.getTemporaryActiveUserKey()
+  - Prevents brute-force guessing of Application IDs
+
+5.4 Application ID Masking
+  - In Retrieve Application section, input is type="password"
+  - After successful retrieve, displayed ID is masked: APP-****-***01
+
+5.5 Maps API Key Exposure
+  - The Maps JavaScript API requires the key in client-side code
+  - This is standard/expected — Google's own documentation does this
+  - Mitigate by restricting the key in Google Cloud Console
+
+
+================================================================================
+6. SHARED DRIVE COMPATIBILITY
+================================================================================
+
+6.1 Resume Folder
+  - RESUME_FOLDER_ID is REQUIRED (no auto-create for Shared Drives)
+  - Use DriveApp.getFolderById() — works for both My Drive and Shared Drive
+  - folder.createFile(blob) works on Shared Drives
+
+6.2 Sharing Permissions
+  - file.setSharing() may fail on Shared Drives (org policy restrictions)
+  - Wrap in try/catch — file is still accessible to drive members
+  - Shared Drive members can access files by default
+
+6.3 Script Account Access
+  - The script runs as the deploying user ("Execute as: Me")
+  - That user needs Contributor/Content Manager access to the Shared Drive
+  - Both the Sheet and the Resume folder must be accessible
+
+
+================================================================================
+7. PRINT FUNCTIONALITY
+================================================================================
+
+7.1 Two Print Versions
+  USER-FACING (from success screen):
+    - Only submitted data, no internal fields
+    - No POC/Referral, no review sections
+    - Footer: "for your personal records"
+
+  HR VERSION (from Retrieve Application):
+    - Full data including POC/Referral (always shown, blank if not filled)
+    - Google Maps Static image with two pins
+    - 4 review sections with comment areas (min-height:80px each):
+      1. Screening Round Comment (Date + Signature)
+      2. Hiring Manager Comment (Date + Signature)
+      3. HOD / Key Authority Comment (Date + Signature)
+      4. Final Status (Date + Approved/Rejected/On Hold + Signature)
+    - NO resume link in print version
+
+7.2 Print Window Approach
+  - window.open() creates a new tab
+  - document.write() injects complete HTML with inline CSS
+  - Works reliably across browsers
+  - Include @media print CSS to hide "Print" button itself
+
+7.3 Static Map in Print
+  - Build the URL synchronously: can't use async callbacks in document.write()
+  - The mapsApiKey must be available BEFORE opening the window
+  - Solution: printApp() fetches key first, then calls openPrintWindow()
+
+7.4 Resume Link in Print
+  - Resume Link cell contains =HYPERLINK("url","text") formula
+  - getValues() returns "Open Resume" (the display text)
+  - getFormulas() returns the actual formula string
+  - Extract URL via regex: formula.match(/HYPERLINK\("([^"]+)"/)
+
+
+================================================================================
+8. UI/UX DECISIONS & FIXES
+================================================================================
+
+8.1 Branding
+  - Header color: #222595 (not the default Google blue #1a73e8)
+  - Header: "Jobs Application Center" (H2)
+  - All center-aligned
+
+8.2 Mobile Number
+  - Country code field (+91 default) + number input (type="number")
+  - Stored as "+91 9876543210" in the sheet
+
+8.3 Success Screen Layout
+  - Copy ID, Print Application, Print Resume, Back to Home → all in one row
+  - Submit Another Application → below, separate, primary color
+  - Application ID displayed prominently with Copy button
+
+8.4 Retrieve Application
+  - NOT shown as a visible section — just a subtle underlined hyperlink
+  - Clicking slides open the hidden panel
+  - Application ID field is type="password" (masked)
+  - On success shows masked ID: APP-****-***01
+
+8.5 Progress Bars
+  - Submit Application: progress bar inside button
+  - Calculate Distance: separate progress bar below address field
+  - Retrieve Application: progress bar inside button
+  - All use natural stage messages, not just percentage
+
+8.6 POC & Referral
+  - NOT on the form (backend only, filled by HR in the Sheet)
+  - ALWAYS shown in HR print version (blank if not filled)
+  - NOT shown in user-facing print version
+
+
+================================================================================
+9. IFRAME SANDBOX ISSUES (APPS SCRIPT)
+================================================================================
+
+9.1 Navigation
+  - <a href="..."> links don't work reliably in the iframe
+  - window.location.href assignment may be blocked
+  - Solution: Use onclick with try/catch reload cascade
+
+9.2 window.open()
+  - Works for opening print windows
+  - The opened window is NOT sandboxed — full DOM access
+  - document.write() works in the opened window
+
+9.3 Clipboard API
+  - navigator.clipboard.writeText() may fail in iframe context
+  - Always provide fallback using document.execCommand('copy')
+  - Create temporary textarea, select, copy, remove
+
+9.4 Focus
+  - .focus() may throw in iframe context
+  - Wrap in try/catch: try{element.focus()}catch(e){}
+
+
+================================================================================
+10. FILE UPLOAD IN APPS SCRIPT
+================================================================================
+
+10.1 Client-Side
+  - Use FileReader.readAsDataURL() to get base64
+  - Split at comma to get just the base64 data: result.split(',')[1]
+  - Pass base64 string + filename + mimeType to server
+
+10.2 Server-Side
+  - Utilities.base64Decode(data) → byte array
+  - Utilities.newBlob(bytes, mimeType, fileName) → blob
+  - folder.createFile(blob) → file
+  - Rename with application ID for uniqueness
+
+10.3 Size Limit
+  - Apps Script has ~50MB request size limit
+  - Set form limit to 30MB (conservative, accounts for base64 overhead)
+  - base64 encoding adds ~33% overhead
+
+10.4 Drag & Drop
+  - Use dragenter/dragover/dragleave/drop events on the upload zone
+  - preventDefault() is critical on dragover (otherwise drop won't work)
+  - The hidden <input type="file"> covers the entire zone with opacity:0
+
+
+================================================================================
+11. SHEET COLUMN LAYOUT & DATA FLOW
+================================================================================
+
+27 columns (A through AA):
+
+  A: Application ID          (APP-YYYYMMDD-XXXXX)
+  B: Current Status           (default: "New")
+  C: Timestamp
+  D: Location
+  E: Position
+  F: Full Name
+  G: Age
+  H: Gender
+  I: Education Level
+  J: Current City
+  K: Address
+  L: Distance from Job Location (KM)
+  M: Mobile Number            (stored with leading apostrophe for text format)
+  N: Email ID
+  O: Work Experience (Years)
+  P: Current Company
+  Q: Notice Period (Days)
+  R: Current CTC (Lakhs)
+  S: Expected CTC (Lakhs)
+  T: Resume File Name
+  U: Resume Link              (HYPERLINK formula)
+  V: Declaration Accepted
+  W: POC Name                 ← backend only
+  X: POC Employee ID          ← backend only
+  Y: Referral Employee Name   ← backend only
+  Z: Referral Employee ID     ← backend only
+  AA: Comment                 ← backend only
+
+JobData tab (3 columns):
+  A: Location | B: Position | C: Office Address
+
+
+================================================================================
+12. DEPLOYMENT CHECKLIST
+================================================================================
+
+1. Fill in CONFIG.SPREADSHEET_ID and CONFIG.RESUME_FOLDER_ID in Code.gs
+2. Run initializeSecrets() with your passkey and Maps API key (once only)
+3. Clear the values from initializeSecrets() after running
+4. Create Google Sheet with:
+   - "JobData" tab: Location | Position | Office Address
+   - "Responses" tab auto-created on first submission
+5. Create Resume folder in Shared Drive, copy its ID
+6. In Google Cloud Console, enable:
+   - Maps JavaScript API
+   - Places API
+   - Distance Matrix API
+   - Maps Static API
+   - Geocoding API
+7. Restrict your API key (HTTP referrer + API restrictions)
+8. Deploy: Run → Deploy → New deployment → Web app
+   - Execute as: Me
+   - Who has access: Anyone
+9. Test: Submit a form, verify sheet data, verify resume upload
+10. Test: Retrieve Application with passkey
+11. Test: Print Application (both user-facing and HR versions)
+12. Test: Distance calculator (with API and manual fallback)
+
+
+================================================================================
+13. COMMON BUGS & THEIR FIXES
+================================================================================
+
+BUG: Calculate button stays disabled after selecting autocomplete suggestion
+FIX: Use mousedown (not click) on suggestion items + call updateCalcBtn()
+
+BUG: "Back to Home" / "Submit Another" buttons don't work
+FIX: Use try/catch cascade with window.top/parent/self.location.reload()
+
+BUG: Print Resume shows "not available"
+FIX: Read getFormulas() alongside getValues() to extract URL from HYPERLINK
+
+BUG: Map missing from print version
+FIX: Use Static Maps API (<img> tag) instead of JavaScript map.
+     Fetch mapsApiKey fresh before opening print window.
+
+BUG: "Maps API not configured" even though key is set
+FIX: Key was in CONFIG but code was reading from empty Script Properties.
+     Added fallback: getMapsKey_() checks Script Properties first, then CONFIG.
+
+BUG: Distance shows 13 KM for a location 100m away
+FIX: Not a code bug — Google geocodes Indian addresses incorrectly.
+     Show resolved addresses for transparency + manual override option.
+
+BUG: Form submission hangs if resume upload fails
+FIX: All server errors propagate to withFailureHandler.
+     Progress bar resets. Error message shown. Button re-enabled.
+
+BUG: Multiple timers running if user clicks Calculate repeatedly
+FIX: cleanupDistTimers() called at START of every calcDist() invocation.
+
+BUG: Success screen doesn't show after submission
+FIX: showSuccess() replaces mainBody.innerHTML inline instead of navigating.
+
+
+================================================================================
+14. API KEY MANAGEMENT
+================================================================================
+
+Two approaches (both work, can be used together):
+
+APPROACH 1: CONFIG object (simple, visible in source)
+  CONFIG.GOOGLE_MAPS_API_KEY = 'your-key'
+  CONFIG.PASSKEY = 'your-passkey'
+
+APPROACH 2: Script Properties (secure, not visible in source)
+  Run initializeSecrets() once
+  PropertiesService.getScriptProperties().setProperty('MAPS_API_KEY', 'key')
+  PropertiesService.getScriptProperties().setProperty('PASSKEY', 'passkey')
+
+The getPasskey_() and getMapsKey_() functions check Script Properties first,
+then fall back to CONFIG. This means either approach works, and both together
+provide redundancy.
+
+
+================================================================================
+END OF LEARNINGS
+================================================================================
