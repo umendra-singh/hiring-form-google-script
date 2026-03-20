@@ -8,7 +8,8 @@ A dynamic job application web app built entirely on Google Apps Script with Goog
 - **Distance Calculator** — Google Maps Places Autocomplete + Distance Matrix API with manual fallback
 - **Resume Upload** — PDF/DOC/DOCX (up to 30 MB), stored in Google Drive with unique filenames
 - **Application Tracking** — Auto-generated IDs (`APP-YYYYMMDD-XXXXX`), timestamped submissions
-- **Two Print Versions** — User-facing (personal records) and HR version (with map + 4 review sections)
+- **Full Hiring Pipeline** — 44-column response sheet with HR, Screener, Hiring Manager, and Final status tracking
+- **Two Print Versions** — Applicant copy (personal records) and HR version (full hiring chronology with status badges)
 - **Retrieve Application** — Passkey-protected lookup with rate limiting
 - **Security** — Secrets in Script Properties, one-time resume tokens, XSS-safe HTML escaping, rate limiting
 
@@ -33,19 +34,36 @@ src/
 | B      | Position       |
 | C      | Office Address |
 
-### Responses Tab (27 columns, A-AA)
+### Responses Tab (44 columns, A–AR)
 
 | Columns | Fields |
 |---------|--------|
-| A-B     | Application ID, Status |
-| C       | Timestamp |
-| D-E     | Location, Position |
-| F-L     | Personal Info (Name, Age, Gender, Education, City, Address, Distance) |
-| M-N     | Contact (Mobile, Email) |
-| O-S     | Professional (Experience, Company, Notice, Current CTC, Expected CTC) |
-| T-U     | Resume (Filename, Link) |
-| V       | Declaration |
-| W-AA    | Backend only: POC, Referral, Comment (filled by HR in Sheet) |
+| A–C     | Application ID, Timestamp, Application Status |
+| D–E     | Location, Position |
+| F–M     | Personal Info (Name, Age, Gender, Education Level, Education Relevant, City, Address, Distance) |
+| N–O     | Contact (Mobile, Email) |
+| P–V     | Professional (Experience, Company, Position, Job Changes, Notice, Current CTC, Expected CTC) |
+| W       | Resume File Name |
+| X–Y     | Referral (Employee Name, Employee ID) — user-submitted, optional |
+| Z       | Declaration |
+| AA      | Resume Link (HYPERLINK formula) |
+| AB–AG   | HR Review (POC Name, Comment, Skill Evaluation, Cost, Reliability, Status) |
+| AH–AJ   | Screener Review (Name, Comment, Status) |
+| AK–AM   | Hiring Manager Review (Name, Comment, Status) |
+| AN–AO   | Final Hiring (Status, Comment) |
+| AP–AR   | Joining (Status, Employee ID, Application Form Link) |
+
+**Data integrity:** Submissions use header-based column lookup (`getColumnMap_()`) — reordering or adding columns won't break existing data.
+
+## Form Sections
+
+1. **Position Details** — Location → Position (conditional dropdown)
+2. **Personal Information** — Name, Age, Gender, Education Level, Education Relevant to Applied Field, City, Distance Calculator
+3. **Contact Details** — Mobile (+91), Email
+4. **Professional Details** — Experience, Company, Position in Current Company, Job Changes in Last 10 Years, Notice Period, CTC
+5. **Referral Details** — Employee Name + ID (optional)
+6. **Resume / CV** — File upload (PDF/DOC/DOCX, max 30 MB)
+7. **Declaration** — Consent checkbox
 
 ## Setup
 
@@ -63,7 +81,7 @@ Create a Google Sheet (Shared Drive OK) with a **JobData** tab:
 | Bangalore | Full Stack Developer | Outer Ring Road, Marathahalli, Bangalore 560037   |
 | Mumbai    | Business Analyst     | Bandra Kurla Complex, Mumbai 400051               |
 
-The **Responses** tab is auto-created on first submission.
+The **Responses** tab is auto-created on first submission, or run `setupResponseSheet()` to create the 44-column header upfront.
 
 ### 2. Create the Resume Folder
 
@@ -116,7 +134,7 @@ In your Google Cloud Console, enable:
 - Verify resume uploads to the Drive folder
 - Test distance calculator (automatic + manual fallback)
 - Test Retrieve Application with your passkey
-- Test both print versions (user-facing + HR)
+- Test both print versions (applicant + HR with hiring chronology)
 
 ## Security
 

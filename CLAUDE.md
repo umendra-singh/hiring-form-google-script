@@ -7,7 +7,7 @@ A Google Apps Script web app — a dynamic job application form with Google Shee
 ```
 src/
   Code.gs         → Server-side Apps Script (all business logic)
-  Form.html       → Main form UI (complete SPA, ~576 lines)
+  Form.html       → Main form UI (complete SPA, ~650 lines)
   Success.html    → Fallback success page (rarely used)
 PROJECT_LEARNINGS.txt → Detailed learnings from the entire build
 ```
@@ -38,46 +38,67 @@ Secrets are in Script Properties via `initializeSecrets()`. CONFIG fields are fa
 ### JobData Tab (3 columns)
 Location | Position | Office Address
 
-### Responses Tab (27 columns A–AA)
+### Responses Tab (44 columns A–AR)
+Data is written by **header-based column lookup** (`getColumnMap_()`) so column order changes won't break existing data.
+
 ```
-A: Application ID (APP-YYYYMMDD-XXXXX)
-B: Current Status (default "New")
-C: Timestamp
-D: Location
-E: Position
-F: Full Name
-G: Age
-H: Gender
-I: Education Level
-J: Current City
-K: Address
-L: Distance from Job Location (KM)
-M: Mobile Number (with +91 prefix)
-N: Email ID
-O: Work Experience (Years)
-P: Current Company
-Q: Notice Period (Days)
-R: Current CTC (Lakhs)
-S: Expected CTC (Lakhs)
-T: Resume File Name
-U: Resume Link (HYPERLINK formula)
-V: Declaration Accepted
-W: POC Name              ← backend only (HR fills in Sheet)
-X: POC Employee ID       ← backend only
-Y: Referral Employee Name ← backend only
-Z: Referral Employee ID   ← backend only
-AA: Comment              ← backend only
+A:  Application ID (APP-YYYYMMDD-XXXXX)
+B:  Timestamp
+C:  Application Status (default "New")
+    ↳ Dropdown: New / In-Progress / Offer Released / Offer Rejected /
+      Joined as Employee / Flagged / Rejected / On Hold
+D:  Location
+E:  Position
+F:  Full Name
+G:  Age (in years)
+H:  Gender
+I:  Highest Education Level
+J:  Education Relevant to Applied Field
+K:  Current City
+L:  Address
+M:  Distance from Job Location (in KM)
+N:  Mobile Number (with +91 prefix)
+O:  Email ID
+P:  Work Experience in Years (relevant to position)
+Q:  Current Company
+R:  Position in Current Company
+S:  Number of Job Changes in Last 10 Years
+T:  Notice Period (in days)
+U:  Current CTC (in lakhs)
+V:  Expected CTC (in lakhs)
+W:  Resume File Name
+X:  Referral Employee Name        ← user-submitted (optional)
+Y:  Referral Employee ID          ← user-submitted (optional)
+Z:  Declaration
+AA: Resume Link (HYPERLINK formula)
+--- Below: managed internally at sheet level by HR ---
+AB: HR POC Name
+AC: HR Comment
+AD: Skill Evaluation (1–10 dropdown)
+AE: Cost (INR)
+AF: Reliability (Low / Medium / High / Excellent)
+AG: HR Status (Selected / Rejected / Flagged / On Hold)
+AH: Screener Name
+AI: Screener Comment
+AJ: Screener Status (Selected / Rejected / Flagged / On Hold)
+AK: Hiring Manager Name
+AL: Hiring Manager Comment
+AM: Hiring Manager Status (Selected / Rejected / Flagged / On Hold)
+AN: Final Hiring Status (Selected / Rejected / Flagged / On Hold)
+AO: Final Hiring Comment
+AP: Final Joining Status (Joined / Offer Rejected / On Hold)
+AQ: Employee ID
+AR: Joining Application Form Link
 ```
 
 ## Form Sections (user-facing)
 1. Position Details (Location → Position conditional dropdown)
-2. Personal Information (Name, Age, Gender, Education, City, Distance Calculator)
+2. Personal Information (Name, Age, Gender, Education Level, Education Relevant, City, Distance Calculator)
 3. Contact Details (Mobile with +91, Email)
-4. Professional Details (Experience, Company, Notice, CTC)
-5. Resume Upload (PDF/DOC/DOCX, max 30MB)
-6. Declaration checkbox
-
-**NOT on form:** POC/Referral fields (backend only, filled by HR in Sheet)
+4. Professional Details (Experience, Company, Position in Current Company, Job Changes, Notice, CTC)
+5. Referral Details (Employee Name + ID — **optional**)
+6. Resume Upload (PDF/DOC/DOCX, max 30MB)
+7. Declaration checkbox
 
 ## Distance Calculator — Critical Architecture
 State machine: `IDLE → LOADING → SUCCESS / MANUAL / ERROR`
@@ -101,20 +122,24 @@ Key decisions:
 
 ## Two Print Versions
 
-### User-Facing (from success screen → `printUserApp()`)
-- Only submitted data, no internal fields
-- No POC/Referral, no review sections
+### Applicant Version (from success screen → `printUserApp()`)
+- Header: Jobs Application Center / Application ID / Timestamp
+- All submitted data including referral details
+- Declaration & Resume section
 - Footer: "for your personal records"
+- NO hiring chronology
 
 ### HR Version (from Retrieve Application → `printApp()` → `openPrintWindow()`)
-- Full data including POC/Referral (always shown, blank if not filled)
+- Header: + Application Status badge
+- Full data including Referral (from sheet — always latest)
 - Google Maps Static API image (two pins)
-- 4 review sections (min-height:80px each):
-  1. Screening Round Comment (Date + Signature)
-  2. Hiring Manager Comment (Date + Signature)
-  3. HOD / Key Authority Comment (Date + Signature)
-  4. Final Status (Date + Approved/Rejected/On Hold + Signature)
-- NO resume link in print version
+- **Hiring Chronology** with actual data from sheet:
+  1. HR Review (POC, Comment, Skill Eval, Cost, Reliability, Status + Date/Signature)
+  2. Screener Review (Name, Comment, Status + Date/Signature)
+  3. Hiring Manager Review (Name, Comment, Status + Date/Signature)
+  4. Final Hiring Decision (Status, Comment + Date/Signature with Designation)
+  5. Joining Status (Final Joining Status, Employee ID, Joining Form Link)
+- Status badges: color-coded (green=selected/joined, red=rejected, yellow=on hold, orange=flagged)
 
 ## Success Screen Layout
 ```
@@ -135,6 +160,7 @@ Key decisions:
 5. **Autocomplete**: Must use `AutocompleteService` (programmatic), NOT `google.maps.places.Autocomplete` (which hijacks the input field)
 6. **Static Maps for print**: JavaScript maps don't render in `window.open()` → use Static Maps API `<img>` tag
 7. **Maps API key on client**: Necessary for Places Autocomplete. Restrict in Google Cloud Console (HTTP referrer + API restrictions)
+8. **Header-based column lookup**: `submitApplication()` writes by header name via `getColumnMap_()`. Adding/reordering columns in the sheet won't break existing data.
 
 ## Required Google Cloud APIs
 - Maps JavaScript API
@@ -146,6 +172,7 @@ Key decisions:
 ## Deployment
 1. Fill `SPREADSHEET_ID` and `RESUME_FOLDER_ID` in Code.gs
 2. Run `initializeSecrets()` once (sets passkey + Maps key in Script Properties)
-3. Deploy → Web app → Execute as: Me → Access: Anyone
-4. Enable all 5 Maps APIs in Google Cloud Console
-5. Restrict API key (HTTP referrer + API restrictions)
+3. Optionally run `setupResponseSheet()` to create the 44-column Responses tab
+4. Deploy → Web app → Execute as: Me → Access: Anyone
+5. Enable all 5 Maps APIs in Google Cloud Console
+6. Restrict API key (HTTP referrer + API restrictions)

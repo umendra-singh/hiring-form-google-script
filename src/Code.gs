@@ -22,6 +22,60 @@ const CONFIG = {
 };
 
 // ──────────────────────────────────────────────────
+// RESPONSE SHEET HEADERS (44 columns)
+// ──────────────────────────────────────────────────
+// Writing uses header-based column lookup so column
+// order changes won't break existing data rows.
+// ──────────────────────────────────────────────────
+
+var RESPONSE_HEADERS = [
+  'Application ID',                               // A
+  'Timestamp',                                     // B
+  'Application Status',                            // C
+  'Location',                                      // D
+  'Position',                                      // E
+  'Full Name',                                     // F
+  'Age (in years)',                                // G
+  'Gender',                                        // H
+  'Highest Education Level',                       // I
+  'Education Relevant to Applied Field',           // J
+  'Current City',                                  // K
+  'Address',                                       // L
+  'Distance from Job Location (in KM)',            // M
+  'Mobile Number',                                 // N
+  'Email ID',                                      // O
+  'Work Experience in Years (relevant to position)', // P
+  'Current Company',                               // Q
+  'Position in Current Company',                   // R
+  'Number of Job Changes in Last 10 Years',        // S
+  'Notice Period (in days)',                        // T
+  'Current CTC (in lakhs)',                        // U
+  'Expected CTC (in lakhs)',                       // V
+  'Resume File Name',                              // W
+  'Referral Employee Name',                        // X
+  'Referral Employee ID',                          // Y
+  'Declaration',                                   // Z
+  'Resume Link',                                   // AA
+  'HR POC Name',                                   // AB
+  'HR Comment',                                    // AC
+  'Skill Evaluation',                              // AD
+  'Cost (INR)',                                    // AE
+  'Reliability',                                   // AF
+  'HR Status',                                     // AG
+  'Screener Name',                                 // AH
+  'Screener Comment',                              // AI
+  'Screener Status',                               // AJ
+  'Hiring Manager Name',                           // AK
+  'Hiring Manager Comment',                        // AL
+  'Hiring Manager Status',                         // AM
+  'Final Hiring Status',                           // AN
+  'Final Hiring Comment',                          // AO
+  'Final Joining Status',                          // AP
+  'Employee ID',                                   // AQ
+  'Joining Application Form Link'                  // AR
+];
+
+// ──────────────────────────────────────────────────
 // SECRET MANAGEMENT — Keys stored in Script Properties
 // ──────────────────────────────────────────────────
 
@@ -47,15 +101,13 @@ function initializeSecrets() {
 function getPasskey_() {
   var fromProps = PropertiesService.getScriptProperties().getProperty('PASSKEY');
   if (fromProps) return fromProps;
-  // Fallback to CONFIG if initializeSecrets hasn't been run yet
   return CONFIG.PASSKEY || '';
 }
 
 function getMapsKey_() {
   var fromProps = PropertiesService.getScriptProperties().getProperty('MAPS_API_KEY');
   if (fromProps) return fromProps;
-  // Fallback to CONFIG if initializeSecrets hasn't been run yet
-  return CONFIG.MAPS_API_KEY || '';
+  return CONFIG.GOOGLE_MAPS_API_KEY || '';
 }
 
 // ──────────────────────────────────────────────────
@@ -146,7 +198,6 @@ function calculateDistance(applicantAddress, officeLocation) {
     var resp = UrlFetchApp.fetch(url, {muteHttpExceptions: true});
     var json = JSON.parse(resp.getContentText());
 
-    // Extract resolved addresses (what Google actually interpreted)
     var resolvedOrigin = (json.origin_addresses && json.origin_addresses[0]) ? json.origin_addresses[0] : applicantAddress;
     var resolvedDestination = (json.destination_addresses && json.destination_addresses[0]) ? json.destination_addresses[0] : officeAddress;
 
@@ -187,6 +238,19 @@ function generateApplicationId_() {
 }
 
 // ──────────────────────────────────────────────────
+// HEADER-BASED COLUMN LOOKUP
+// ──────────────────────────────────────────────────
+
+function getColumnMap_(sheet) {
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  var map = {};
+  for (var i = 0; i < headers.length; i++) {
+    map[headers[i].toString().trim()] = i + 1; // 1-based column index
+  }
+  return map;
+}
+
+// ──────────────────────────────────────────────────
 // FORM SUBMISSION
 // ──────────────────────────────────────────────────
 
@@ -212,27 +276,59 @@ function submitApplication(formData, fileData, fileName, mimeType) {
 
   var ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
   var sh = ss.getSheetByName(CONFIG.RESPONSES_SHEET_NAME);
+
   if (!sh) {
     sh = ss.insertSheet(CONFIG.RESPONSES_SHEET_NAME);
-    var h = ['Application ID','Current Status','Timestamp','Location','Position','Full Name','Age','Gender','Education Level','Current City','Address','Distance from Job Location (KM)','Mobile Number','Email ID','Work Experience (Years)','Current Company','Notice Period (Days)','Current CTC (Lakhs)','Expected CTC (Lakhs)','Resume File Name','Resume Link','Declaration Accepted','POC Name','POC Employee ID','Referral Employee Name','Referral Employee ID','Comment'];
-    sh.appendRow(h);
-    sh.getRange(1, 1, 1, h.length).setFontWeight('bold').setBackground('#222595').setFontColor('#FFFFFF').setFontSize(10);
+    sh.appendRow(RESPONSE_HEADERS);
+    sh.getRange(1, 1, 1, RESPONSE_HEADERS.length).setFontWeight('bold').setBackground('#222595').setFontColor('#FFFFFF').setFontSize(10);
     sh.setFrozenRows(1);
   }
 
-  sh.appendRow([
-    appId, 'New', ts, formData.location, formData.position, formData.fullName,
-    formData.age, formData.gender, formData.educationLevel, formData.currentCity,
-    formData.address || '', formData.distanceKm || '—',
-    "'" + formData.mobileNumber, formData.email, formData.workExperience,
-    formData.currentCompany, formData.noticePeriod, formData.currentCtc, formData.expectedCtc,
-    resumeFn, resumeUrl, formData.declaration ? 'Yes' : 'No',
-    '', '', '', '', ''
-  ]);
+  // Build column map from actual headers (works with any column arrangement)
+  var colMap = getColumnMap_(sh);
+  var newRow = sh.getLastRow() + 1;
 
+  // Helper: set cell value by header name
+  function setVal(header, value) {
+    var col = colMap[header];
+    if (col) sh.getRange(newRow, col).setValue(value);
+  }
+
+  setVal('Application ID', appId);
+  setVal('Timestamp', ts);
+  setVal('Application Status', 'New');
+  setVal('Location', formData.location);
+  setVal('Position', formData.position);
+  setVal('Full Name', formData.fullName);
+  setVal('Age (in years)', formData.age);
+  setVal('Gender', formData.gender);
+  setVal('Highest Education Level', formData.educationLevel);
+  setVal('Education Relevant to Applied Field', formData.educationRelevant);
+  setVal('Current City', formData.currentCity);
+  setVal('Address', formData.address || '');
+  setVal('Distance from Job Location (in KM)', formData.distanceKm || '—');
+  setVal('Mobile Number', "'" + formData.mobileNumber);
+  setVal('Email ID', formData.email);
+  setVal('Work Experience in Years (relevant to position)', formData.workExperience);
+  setVal('Current Company', formData.currentCompany);
+  setVal('Position in Current Company', formData.positionInCurrentCompany);
+  setVal('Number of Job Changes in Last 10 Years', formData.jobChanges);
+  setVal('Notice Period (in days)', formData.noticePeriod);
+  setVal('Current CTC (in lakhs)', formData.currentCtc);
+  setVal('Expected CTC (in lakhs)', formData.expectedCtc);
+  setVal('Resume File Name', resumeFn);
+  setVal('Referral Employee Name', formData.referralName || '');
+  setVal('Referral Employee ID', formData.referralId || '');
+  setVal('Declaration', formData.declaration ? 'Yes' : 'No');
+
+  // Resume link as HYPERLINK formula
   if (resumeUrl !== '—') {
-    var lr = sh.getLastRow();
-    sh.getRange(lr, 21).setFormula('=HYPERLINK("' + resumeUrl + '","Open Resume")');
+    var resumeCol = colMap['Resume Link'];
+    if (resumeCol) {
+      sh.getRange(newRow, resumeCol).setFormula('=HYPERLINK("' + resumeUrl + '","Open Resume")');
+    }
+  } else {
+    setVal('Resume Link', '—');
   }
 
   // Store a one-time token for this application (allows resume access without passkey)
@@ -264,9 +360,14 @@ function getResumeLink_(appId) {
   if (!sh) throw new Error('Responses sheet not found.');
   var lr = sh.getLastRow(); if (lr < 2) throw new Error('No data.');
 
+  // Find Resume Link column by header (not hardcoded position)
+  var colMap = getColumnMap_(sh);
+  var resumeCol = colMap['Resume Link'];
+  if (!resumeCol) throw new Error('Resume Link column not found.');
+
   var ids = sh.getRange(2, 1, lr - 1, 1).getValues();
-  var formulas = sh.getRange(2, 21, lr - 1, 1).getFormulas(); // Column U = Resume Link
-  var values = sh.getRange(2, 21, lr - 1, 1).getValues();
+  var formulas = sh.getRange(2, resumeCol, lr - 1, 1).getFormulas();
+  var values = sh.getRange(2, resumeCol, lr - 1, 1).getValues();
 
   for (var i = 0; i < ids.length; i++) {
     if (ids[i][0].toString().trim() === appId.trim()) {
@@ -365,4 +466,24 @@ function setupSampleData() {
   sh.getRange(2, 1, d.length, 3).setValues(d);
   sh.autoResizeColumns(1, 3); sh.setFrozenRows(1);
   Logger.log('Sheet: ' + ss.getUrl());
+}
+
+/**
+ * Run once to set up the Responses sheet with the new 44-column headers.
+ * Safe to run on an existing sheet — only creates if it doesn't exist.
+ */
+function setupResponseSheet() {
+  var ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+  var sh = ss.getSheetByName(CONFIG.RESPONSES_SHEET_NAME);
+  if (!sh) {
+    sh = ss.insertSheet(CONFIG.RESPONSES_SHEET_NAME);
+    sh.appendRow(RESPONSE_HEADERS);
+    sh.getRange(1, 1, 1, RESPONSE_HEADERS.length).setFontWeight('bold').setBackground('#222595').setFontColor('#FFFFFF').setFontSize(10);
+    sh.setFrozenRows(1);
+    sh.autoResizeColumns(1, RESPONSE_HEADERS.length);
+    Logger.log('Responses sheet created with ' + RESPONSE_HEADERS.length + ' columns.');
+  } else {
+    Logger.log('Responses sheet already exists. No changes made.');
+    Logger.log('To add new columns to an existing sheet, add them manually to preserve data.');
+  }
 }
