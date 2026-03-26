@@ -7,10 +7,11 @@ A dynamic job application web app built entirely on Google Apps Script with Goog
 - **Dynamic Form** — Location-dependent position dropdown, auto-populated from a Google Sheet
 - **Distance Calculator** — Google Maps Places Autocomplete + Distance Matrix API with manual fallback
 - **Resume Upload** — PDF/DOC/DOCX (up to 30 MB), stored in Google Drive with unique filenames
-- **Application Tracking** — Auto-generated IDs (`APP-YYYYMMDD-XXXXX`), timestamped submissions
+- **Application Tracking** — Auto-generated IDs (`APP-YYYYMMDD-XXXXX`), timestamps in `DD/MM/YYYY hh:mm:ss AM/PM` format
 - **Full Hiring Pipeline** — 44-column response sheet with HR, Screener, Hiring Manager, and Final status tracking
 - **Two Print Versions** — Applicant copy (personal records) and HR version (full hiring chronology with status badges)
 - **Retrieve Application** — Passkey-protected lookup with rate limiting
+- **Confirmation Email** — Automated email via AWS SES on submission with full details + resume attached
 - **Security** — Secrets in Script Properties, one-time resume tokens, XSS-safe HTML escaping, rate limiting
 
 ## Architecture
@@ -38,7 +39,7 @@ src/
 
 | Columns | Fields |
 |---------|--------|
-| A–C     | Application ID, Timestamp, Application Status |
+| A–C     | Application ID, Timestamp (DD/MM/YYYY hh:mm:ss AM/PM), Application Status |
 | D–E     | Location, Position |
 | F–M     | Personal Info (Name, Age, Gender, Education Level, Education Relevant, City, Address, Distance) |
 | N–O     | Contact (Mobile, Email) |
@@ -50,7 +51,7 @@ src/
 | AB–AG   | HR Review (POC Name, Comment, Skill Evaluation, Cost, Reliability, Status) |
 | AH–AJ   | Screener Review (Name, Comment, Status) |
 | AK–AM   | Hiring Manager Review (Name, Comment, Status) |
-| AN–AO   | Final Hiring (Status, Comment) |
+| AN–AO   | Final Hiring (Status: Selected/Rejected/Flagged/On Hold, Comment) |
 | AP–AR   | Joining (Status, Employee ID, Application Form Link) |
 
 **Data integrity:** Submissions use header-based column lookup (`getColumnMap_()`) — reordering or adding columns won't break existing data.
@@ -107,7 +108,25 @@ props.setProperty('MAPS_API_KEY', 'your-google-maps-api-key');
 
 Run `initializeSecrets()` once in the Apps Script editor, then **clear the values from the source code** and save.
 
-### 5. Enable Google Cloud APIs
+### 5. Configure AWS SES (Optional — for confirmation emails)
+
+In `initializeSecrets()`, also set:
+
+```javascript
+props.setProperty('AWS_ACCESS_KEY_ID', 'your-aws-access-key');
+props.setProperty('AWS_SECRET_ACCESS_KEY', 'your-aws-secret-key');
+props.setProperty('AWS_REGION', 'us-east-1');  // Your SES region
+props.setProperty('SES_SENDER_EMAIL', 'noreply@yourdomain.com');  // Must be verified in SES
+```
+
+**Requirements:**
+- Verified sender email/domain in AWS SES
+- IAM user with `ses:SendRawEmail` permission
+- If SES is in sandbox mode, recipient emails must also be verified
+
+If SES is not configured, the form works normally — email is silently skipped.
+
+### 6. Enable Google Cloud APIs
 
 In your Google Cloud Console, enable:
 
@@ -121,20 +140,21 @@ In your Google Cloud Console, enable:
 - HTTP referrer: your deployed Apps Script URL
 - API restrictions: limit to the 5 APIs above
 
-### 6. Deploy
+### 7. Deploy
 
 1. Open Apps Script editor
 2. Deploy > New deployment > Web app
 3. Execute as: **Me**
 4. Who has access: **Anyone**
 
-### 7. Test
+### 8. Test
 
 - Submit a form and verify data appears in the Responses sheet
 - Verify resume uploads to the Drive folder
 - Test distance calculator (automatic + manual fallback)
 - Test Retrieve Application with your passkey
 - Test both print versions (applicant + HR with hiring chronology)
+- If SES configured: verify confirmation email received with all details + resume attached
 
 ## Security
 
@@ -145,6 +165,7 @@ In your Google Cloud Console, enable:
 | **Resume Token** | One-time UUID via `CacheService` (1-hour TTL) for post-submission resume access without passkey |
 | **Rate Limiting** | Max 5 retrieve attempts per minute per session |
 | **XSS Protection** | All user/server data HTML-escaped before injection |
+| **AWS SES Keys** | Access Key, Secret Key, Region, Sender stored in Script Properties — never in source |
 | **Input Masking** | Application ID and passkey fields use `type="password"` |
 
 ## Known Limitations

@@ -6,9 +6,10 @@ A Google Apps Script web app — a dynamic job application form with Google Shee
 ## Files
 ```
 src/
-  Code.gs         → Server-side Apps Script (all business logic)
-  Form.html       → Main form UI (complete SPA, ~650 lines)
+  Code.gs         → Server-side Apps Script (all business logic, ~820 lines)
+  Form.html       → Main form UI (complete SPA, ~868 lines)
   Success.html    → Fallback success page (rarely used)
+DOCUMENTATION.md      → Enterprise technical documentation (local only, gitignored)
 PROJECT_LEARNINGS.txt → Detailed learnings from the entire build
 ```
 
@@ -28,6 +29,15 @@ CONFIG.PASSKEY             → Leave blank (stored in Script Properties)
 ```
 Secrets are in Script Properties via `initializeSecrets()`. CONFIG fields are fallbacks.
 
+### AWS SES Email (Script Properties)
+```
+AWS_ACCESS_KEY_ID     → IAM access key for SES
+AWS_SECRET_ACCESS_KEY → IAM secret key for SES
+AWS_REGION            → SES region (e.g., us-east-1)
+SES_SENDER_EMAIL      → Verified sender email address
+```
+Set via `initializeSecrets()`. If not configured, email is silently skipped.
+
 ## Branding
 - Primary color: `#222595`
 - Header: "Jobs Application Center"
@@ -43,7 +53,7 @@ Data is written by **header-based column lookup** (`getColumnMap_()`) so column 
 
 ```
 A:  Application ID (APP-YYYYMMDD-XXXXX)
-B:  Timestamp
+B:  Timestamp (DD/MM/YYYY hh:mm:ss AM/PM — stored as text)
 C:  Application Status (default "New")
     ↳ Dropdown: New / In-Progress / Offer Released / Offer Rejected /
       Joined as Employee / Flagged / Rejected / On Hold
@@ -112,9 +122,18 @@ Key decisions:
 - After success: shows resolved addresses (what Google interpreted) + "Distance seems wrong?" manual override link
 - `cleanupDistTimers()` called on EVERY state transition — no orphan timers
 
+## Confirmation Email (AWS SES)
+- Sent automatically on successful submission via AWS SES `SendRawEmail` API
+- Contains ALL submitted details (mirrors Applicant Print content) + resume attached
+- Sender: `"Jobs Application Center" <verified-sender@domain.com>`
+- Uses AWS SigV4 request signing (pure Apps Script, no SDK)
+- Non-blocking: email failure never prevents submission (caught + logged)
+- If SES credentials not configured, email is silently skipped
+
 ## Security
 - Passkey stored in Script Properties, NOT in source code
 - Maps API key stored in Script Properties
+- AWS SES credentials (Access Key, Secret Key, Region, Sender Email) stored in Script Properties
 - One-time resume token (UUID via `Utilities.getUuid()`) in CacheService (1 hour TTL) — allows resume access post-submission without exposing passkey
 - Rate limiting: max 5 retrieve attempts per minute per session
 - Application ID input is `type="password"` (masked)
@@ -139,7 +158,8 @@ Key decisions:
   3. Hiring Manager Review (Name, Comment, Status + Date/Signature)
   4. Final Hiring Decision (Status, Comment + Date/Signature with Designation)
   5. Joining Status (Final Joining Status, Employee ID, Joining Form Link)
-- Status badges: color-coded (green=selected/joined, red=rejected, yellow=on hold, orange=flagged)
+- Status badges: color-coded (green=selected/joined, red=rejected, yellow=on hold, orange=flagged) — rendered inline via `fldBadge()`, no negative margins
+- URL fields (Resume Link, Joining Form Link) render as clickable links via `fldLink()` — auto-detects `http` URLs, truncates long URLs at 55 chars
 
 ## Success Screen Layout
 ```
@@ -161,6 +181,14 @@ Key decisions:
 6. **Static Maps for print**: JavaScript maps don't render in `window.open()` → use Static Maps API `<img>` tag
 7. **Maps API key on client**: Necessary for Places Autocomplete. Restrict in Google Cloud Console (HTTP referrer + API restrictions)
 8. **Header-based column lookup**: `submitApplication()` writes by header name via `getColumnMap_()`. Adding/reordering columns in the sheet won't break existing data.
+9. **Timestamp as text**: Timestamp is stored as a formatted string (`DD/MM/YYYY hh:mm:ss AM/PM`), not a Date object. This prevents Google Sheets locale from reformatting it. Both server (Code.gs) and client (Form.html) use identical formatting.
+10. **Rupee symbol in print**: `&#8377;` must be placed outside `escHtml()` calls, otherwise the `&` is double-escaped to `&amp;#8377;` and renders as literal text.
+11. **Status badges must be inline**: Never use negative `margin-top` to position status badges — use `fldBadge()` helper which renders the badge inside the grid cell.
+12. **URLs in print must be links**: Use `fldLink()` instead of `fld()` for any field that may contain a URL. `fld()` escapes the URL as plain text; `fldLink()` renders it as a clickable `<a>` tag.
+13. **MIME headers must be 7-bit ASCII**: Email subject and headers cannot contain Unicode characters (em dash, rupee symbol, etc.). Use plain ASCII in MIME headers and HTML entities (`&#8377;`) in the email HTML body.
+14. **Email rupee symbol same gotcha as print**: In `buildEmailHtml_()`, the `&#8377;` entity must be placed outside the `e()` escape function — same double-escaping issue as gotcha #10. CTC rows use inline HTML instead of the `row()` helper.
+15. **Email is non-blocking**: `sendConfirmationEmail_()` is wrapped in try/catch inside `submitApplication()`. Email failure must NEVER prevent form submission. SES credentials missing = silent skip.
+16. **SpreadsheetApp.flush() before email**: All `setValue()`/`setFormula()` calls are batched by Apps Script and only flushed when the function returns. The email operation (base64 encode + HTTP) can be slow — if it causes a timeout, pending writes (including the HYPERLINK formula for Resume Link) are lost. `SpreadsheetApp.flush()` MUST be called after all sheet writes and BEFORE the email send.
 
 ## Required Google Cloud APIs
 - Maps JavaScript API
@@ -169,10 +197,15 @@ Key decisions:
 - Maps Static API
 - Geocoding API
 
+## Required AWS Services (for email)
+- AWS SES (Simple Email Service) — sender email/domain must be verified
+- IAM user with `ses:SendRawEmail` permission
+
 ## Deployment
 1. Fill `SPREADSHEET_ID` and `RESUME_FOLDER_ID` in Code.gs
-2. Run `initializeSecrets()` once (sets passkey + Maps key in Script Properties)
+2. Run `initializeSecrets()` once (sets passkey, Maps key, AWS SES credentials in Script Properties)
 3. Optionally run `setupResponseSheet()` to create the 44-column Responses tab
 4. Deploy → Web app → Execute as: Me → Access: Anyone
 5. Enable all 5 Maps APIs in Google Cloud Console
 6. Restrict API key (HTTP referrer + API restrictions)
+7. Verify sender email in AWS SES console (required for email delivery)

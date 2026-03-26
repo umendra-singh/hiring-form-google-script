@@ -14,5 +14,11 @@ desktop.ini
 # Node (if used later)
 node_modules/
 
+# Internal documentation (contains deployment branding — local only)
+DOCUMENTATION.md
+DOCUMENTATION.html
+DOCUMENTATION.pdf
+
 # Secrets - never commit actual keys
 # (CONFIG values in Code.gs are blank by default; secrets go in Script Properties)
+EMAIL_PREVIEW.html

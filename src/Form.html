@@ -76,7 +76,7 @@
       <div class="sec"><div class="sec-lbl"><span class="sec-n">2</span> Personal Information</div>
         <div class="fg" id="gNam"><label>Full Name <span class="req">*</span></label><input type="text" id="fNam" placeholder="First Name Last Name"><div class="em">Full name is required</div></div>
         <div class="fr3"><div class="fg" id="gAge"><label>Age (in years) <span class="req">*</span></label><input type="number" id="fAge" placeholder="e.g. 28" min="18" max="70"><div class="em">Enter age (18–70)</div></div><div class="fg" id="gGen"><label>Gender <span class="req">*</span></label><select id="fGen"><option value="">— Select —</option><option>Male</option><option>Female</option></select><div class="em">Please select</div></div><div class="fg" id="gEdu"><label>Highest Education Level <span class="req">*</span></label><select id="fEdu"><option value="">— Select —</option><option>High School</option><option>Diploma</option><option>Bachelor's Degree</option><option>Master's Degree</option><option>PhD / Doctorate</option><option>Other</option></select><div class="em">Please select</div></div></div>
-        <div class="fg" id="gEduR"><label>Education Relevant to Applied Field <span class="req">*</span></label><input type="text" id="fEduR" placeholder="e.g. B.Tech in Computer Science, MBA in Marketing"><div class="em">This field is required</div></div>
+        <div class="fg" id="gEduR"><label>Education Relevant to Applied Field <span class="req">*</span></label><input type="text" id="fEduR" placeholder="e.g. Diploma in Mechanical Engineering, MBA in Finance"><div class="em">This field is required</div></div>
         <div class="fg" id="gCty"><label>Current City <span class="req">*</span></label><input type="text" id="fCty" placeholder="e.g. Pune"><div class="em">Current city is required</div></div>
         <div class="fg" id="gDst">
           <div class="dst-label"><svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg><label style="margin-bottom:0">Your Current Address to Job Location (in KM) <span class="req">*</span></label></div>
@@ -558,7 +558,7 @@ function doSubmit(){
   google.script.run.withSuccessHandler(function(r){
     prog.stop();
     submittedData.applicationId=r.applicationId;
-    submittedData.timestamp=new Date().toLocaleString();
+    submittedData.timestamp=(function(){var n=new Date(),dd=String(n.getDate()).padStart(2,'0'),mm=String(n.getMonth()+1).padStart(2,'0'),yy=n.getFullYear(),hr=n.getHours(),ap=hr>=12?'PM':'AM';hr=hr%12;if(hr===0)hr=12;var hh=String(hr).padStart(2,'0'),mi=String(n.getMinutes()).padStart(2,'0'),ss=String(n.getSeconds()).padStart(2,'0');return dd+'/'+mm+'/'+yy+' '+hh+':'+mi+':'+ss+' '+ap})();
     resumeToken=r.resumeToken||'';
     setTimeout(function(){showSuccess(r.applicationId)},500);
   }).withFailureHandler(function(e){
@@ -696,6 +696,18 @@ function openPrintWindow(d){
 
   // Helper: render a field row (label + value), show blank space if no data
   function fld(label,val){return '<div class="fd"><div class="lb">'+e(label)+'</div><div class="vl">'+(val?e(val):'&nbsp;')+'</div></div>';}
+  // Helper: render a field with status badge instead of plain text
+  function fldBadge(label,val){return '<div class="fd"><div class="lb">'+e(label)+'</div><div class="vl">'+statusBadge(val)+'</div></div>';}
+  // Helper: render a field where value may be a URL — show as clickable link
+  function fldLink(label,val){
+    if(!val) return '<div class="fd"><div class="lb">'+e(label)+'</div><div class="vl">&nbsp;</div></div>';
+    var s=val.toString();
+    if(s.indexOf('http')===0){
+      var display=s.length>55?s.substring(0,52)+'...':s;
+      return '<div class="fd"><div class="lb">'+e(label)+'</div><div class="vl"><a href="'+e(s)+'" target="_blank" class="link-box">'+e(display)+' &#8599;</a></div></div>';
+    }
+    return fld(label,val);
+  }
 
   var h='<!DOCTYPE html><html><head><title>'+e(d['Application ID']||'Application')+'</title>'+
   '<style>'+
@@ -780,8 +792,8 @@ function openPrintWindow(d){
   h+=fld('Position in Current Company',d['Position in Current Company']);
   h+=fld('Job Changes in Last 10 Years',d['Number of Job Changes in Last 10 Years']);
   h+=fld('Notice Period',d['Notice Period (in days)']?(d['Notice Period (in days)']+' days'):'');
-  h+=fld('Current CTC','&#8377; '+(d['Current CTC (in lakhs)']||'')+' Lakhs');
-  h+=fld('Expected CTC','&#8377; '+(d['Expected CTC (in lakhs)']||'')+' Lakhs');
+  h+='<div class="fd"><div class="lb">'+e('Current CTC')+'</div><div class="vl">&#8377; '+e(d['Current CTC (in lakhs)']||'')+' Lakhs</div></div>';
+  h+='<div class="fd"><div class="lb">'+e('Expected CTC')+'</div><div class="vl">&#8377; '+e(d['Expected CTC (in lakhs)']||'')+' Lakhs</div></div>';
   h+='</div></div>';
 
   // ── REFERRAL DETAILS ──
@@ -794,43 +806,34 @@ function openPrintWindow(d){
 
   // Declaration & Resume
   h+='<div class="dcl-box"><div class="lb">Declaration</div><div class="vl">'+e(d['Declaration']||'—')+'</div></div>';
-  var resumeLink=d['Resume Link']||'';
-  if(resumeLink&&resumeLink!=='—'&&resumeLink.indexOf('http')===0){
-    h+='<div style="margin-bottom:14px"><span class="lb" style="font-size:8px;text-transform:uppercase;letter-spacing:1px;color:#999;font-weight:700">Resume</span>&nbsp;&nbsp;<a href="'+e(resumeLink)+'" target="_blank" class="link-box">Open Resume &#8599;</a></div>';
-  } else {
-    h+='<div style="margin-bottom:14px"><span class="lb" style="font-size:8px;text-transform:uppercase;letter-spacing:1px;color:#999;font-weight:700">Resume</span>&nbsp;&nbsp;<span style="color:#999;font-size:11px">—</span></div>';
-  }
+  h+='<div style="margin-bottom:14px">'+fldLink('Resume Link',d['Resume Link'])+'</div>';
 
   // ── HR Review ──
   h+='<div class="ch-section">';
   h+='<div class="ch-title">HR Review</div>';
-  h+='<div class="ch-grid">'+fld('HR POC Name',d['HR POC Name'])+fld('HR Status','')+' </div>';
-  // HR Status as badge
-  h+='<div style="margin-top:-20px;margin-bottom:8px">'+statusBadge(d['HR Status'])+'</div>';
+  h+='<div class="ch-grid">'+fld('HR POC Name',d['HR POC Name'])+fldBadge('HR Status',d['HR Status'])+'</div>';
   h+='<div class="ch-sub">'+fld('Skill Evaluation',d['Skill Evaluation']?(d['Skill Evaluation']+' / 10'):'')+fld('Cost (INR)',d['Cost (INR)'])+fld('Reliability',d['Reliability'])+'</div>';
   var hrComment=d['HR Comment']||'';
   h+='<div class="ch-comment'+(hrComment?'':' empty')+'">'+(hrComment?e(hrComment):'No comments yet')+'</div>';
-  h+='<div class="sig-row"><div class="sig-box">Date</div><div class="sig-box">Sign &amp; Signature</div></div>';
+  h+='<div class="sig-row"><div class="sig-box">Date</div><div class="sig-box">Signature</div></div>';
   h+='</div>';
 
   // ── Screener Review ──
   h+='<div class="ch-section">';
   h+='<div class="ch-title">Screener Review</div>';
-  h+='<div class="ch-grid">'+fld('Screener Name',d['Screener Name'])+fld('Screener Status','')+'</div>';
-  h+='<div style="margin-top:-20px;margin-bottom:8px">'+statusBadge(d['Screener Status'])+'</div>';
+  h+='<div class="ch-grid">'+fld('Screener Name',d['Screener Name'])+fldBadge('Screener Status',d['Screener Status'])+'</div>';
   var scrComment=d['Screener Comment']||'';
   h+='<div class="ch-comment'+(scrComment?'':' empty')+'">'+(scrComment?e(scrComment):'No comments yet')+'</div>';
-  h+='<div class="sig-row"><div class="sig-box">Date</div><div class="sig-box">Sign &amp; Signature</div></div>';
+  h+='<div class="sig-row"><div class="sig-box">Date</div><div class="sig-box">Signature</div></div>';
   h+='</div>';
 
   // ── Hiring Manager Review ──
   h+='<div class="ch-section">';
   h+='<div class="ch-title">Hiring Manager Review</div>';
-  h+='<div class="ch-grid">'+fld('Hiring Manager Name',d['Hiring Manager Name'])+fld('Hiring Manager Status','')+'</div>';
-  h+='<div style="margin-top:-20px;margin-bottom:8px">'+statusBadge(d['Hiring Manager Status'])+'</div>';
+  h+='<div class="ch-grid">'+fld('Hiring Manager Name',d['Hiring Manager Name'])+fldBadge('Hiring Manager Status',d['Hiring Manager Status'])+'</div>';
   var hmComment=d['Hiring Manager Comment']||'';
   h+='<div class="ch-comment'+(hmComment?'':' empty')+'">'+(hmComment?e(hmComment):'No comments yet')+'</div>';
-  h+='<div class="sig-row"><div class="sig-box">Date</div><div class="sig-box">Sign &amp; Signature</div></div>';
+  h+='<div class="sig-row"><div class="sig-box">Date</div><div class="sig-box">Signature</div></div>';
   h+='</div>';
 
   // ── Final Hiring Decision ──
@@ -839,23 +842,17 @@ function openPrintWindow(d){
   h+='<div style="margin-bottom:8px">'+statusBadge(d['Final Hiring Status'])+'</div>';
   var fhComment=d['Final Hiring Comment']||'';
   h+='<div class="ch-comment'+(fhComment?'':' empty')+'">'+(fhComment?e(fhComment):'No comments yet')+'</div>';
-  h+='<div class="sig-row"><div class="sig-box">Date</div><div class="sig-box">Sign &amp; Signature with Designation</div></div>';
+  h+='<div class="sig-row"><div class="sig-box">Date</div><div class="sig-box">Name &amp; Signature with Designation</div></div>';
   h+='</div>';
 
   // ── Final Joining Status ──
   h+='<div class="ch-section">';
   h+='<div class="ch-title">Joining Status</div>';
   h+='<div class="ch-grid">';
-  h+=fld('Final Joining Status','');
+  h+=fldBadge('Final Joining Status',d['Final Joining Status']);
   h+=fld('Employee ID',d['Employee ID']);
   h+='</div>';
-  h+='<div style="margin-top:-20px;margin-bottom:8px">'+statusBadge(d['Final Joining Status'])+'</div>';
-  var joinLink=d['Joining Application Form Link']||'';
-  if(joinLink&&joinLink.indexOf('http')===0){
-    h+='<div style="margin-top:8px"><span class="lb" style="font-size:8px;text-transform:uppercase;letter-spacing:1px;color:#999;font-weight:700">Joining Application Form</span>&nbsp;&nbsp;<a href="'+e(joinLink)+'" target="_blank" class="link-box">Open Form &#8599;</a></div>';
-  } else {
-    h+='<div style="margin-top:8px">'+fld('Joining Application Form Link',joinLink)+'</div>';
-  }
+  h+='<div style="margin-top:8px">'+fldLink('Joining Application Form Link',d['Joining Application Form Link'])+'</div>';
   h+='</div>';
 
   h+='</div>'; // close hiring chronology section

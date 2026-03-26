@@ -93,9 +93,15 @@ function initializeSecrets() {
   // Set your Maps API key here, run this function, then CLEAR this line
   props.setProperty('MAPS_API_KEY', '');  // <-- paste your key, run, then clear
 
+  // AWS SES — Set these, run this function, then CLEAR the values
+  props.setProperty('AWS_ACCESS_KEY_ID', '');      // <-- IAM access key
+  props.setProperty('AWS_SECRET_ACCESS_KEY', '');   // <-- IAM secret key
+  props.setProperty('AWS_REGION', 'us-east-1');     // <-- SES region
+  props.setProperty('SES_SENDER_EMAIL', '');        // <-- Verified sender email
+
   Logger.log('Secrets stored successfully in Script Properties.');
   Logger.log('IMPORTANT: Now clear the values in initializeSecrets() and redeploy.');
-  Logger.log('Your secrets are safely stored and accessible via getPasskey_() and getMapsKey_().');
+  Logger.log('Your secrets are safely stored and accessible via getPasskey_(), getMapsKey_(), and AWS getters.');
 }
 
 function getPasskey_() {
@@ -108,6 +114,258 @@ function getMapsKey_() {
   var fromProps = PropertiesService.getScriptProperties().getProperty('MAPS_API_KEY');
   if (fromProps) return fromProps;
   return CONFIG.GOOGLE_MAPS_API_KEY || '';
+}
+
+function getAwsAccessKey_() {
+  return PropertiesService.getScriptProperties().getProperty('AWS_ACCESS_KEY_ID') || '';
+}
+
+function getAwsSecretKey_() {
+  return PropertiesService.getScriptProperties().getProperty('AWS_SECRET_ACCESS_KEY') || '';
+}
+
+function getAwsRegion_() {
+  return PropertiesService.getScriptProperties().getProperty('AWS_REGION') || 'us-east-1';
+}
+
+function getSesSenderEmail_() {
+  return PropertiesService.getScriptProperties().getProperty('SES_SENDER_EMAIL') || '';
+}
+
+// ──────────────────────────────────────────────────
+// AWS SIGV4 SIGNING HELPERS
+// ──────────────────────────────────────────────────
+
+function toHex_(bytes) {
+  return bytes.map(function(b) { return ('0' + (b & 0xFF).toString(16)).slice(-2); }).join('');
+}
+
+function sha256Hex_(data) {
+  var bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, data, Utilities.Charset.UTF_8);
+  return toHex_(bytes);
+}
+
+function hmacSha256_(key, data) {
+  // key: byte array, data: string → returns byte array
+  return Utilities.computeHmacSha256Signature(Utilities.newBlob(data).getBytes(), key);
+}
+
+function getSigningKey_(secretKey, dateStamp, region, service) {
+  var kDate = hmacSha256_(Utilities.newBlob('AWS4' + secretKey).getBytes(), dateStamp);
+  var kRegion = hmacSha256_(kDate, region);
+  var kService = hmacSha256_(kRegion, service);
+  return hmacSha256_(kService, 'aws4_request');
+}
+
+/**
+ * Signs an AWS API request using Signature Version 4.
+ * Returns an object with the Authorization header and signed headers.
+ */
+function signAwsRequest_(method, host, path, payload, region, service, accessKey, secretKey) {
+  var now = new Date();
+  var amzDate = Utilities.formatDate(now, 'UTC', "yyyyMMdd'T'HHmmss'Z'");
+  var dateStamp = Utilities.formatDate(now, 'UTC', 'yyyyMMdd');
+
+  var payloadHash = sha256Hex_(payload);
+  var canonicalHeaders = 'content-type:application/json\nhost:' + host + '\nx-amz-content-sha256:' + payloadHash + '\nx-amz-date:' + amzDate + '\n';
+  var signedHeaders = 'content-type;host;x-amz-content-sha256;x-amz-date';
+
+  var canonicalRequest = method + '\n' + path + '\n\n' + canonicalHeaders + '\n' + signedHeaders + '\n' + payloadHash;
+
+  var credentialScope = dateStamp + '/' + region + '/' + service + '/aws4_request';
+  var stringToSign = 'AWS4-HMAC-SHA256\n' + amzDate + '\n' + credentialScope + '\n' + sha256Hex_(canonicalRequest);
+
+  var signingKey = getSigningKey_(secretKey, dateStamp, region, service);
+  var signature = toHex_(hmacSha256_(signingKey, stringToSign));
+
+  var authHeader = 'AWS4-HMAC-SHA256 Credential=' + accessKey + '/' + credentialScope +
+    ', SignedHeaders=' + signedHeaders + ', Signature=' + signature;
+
+  return { authorization: authHeader, amzDate: amzDate, payloadHash: payloadHash };
+}
+
+// ──────────────────────────────────────────────────
+// AWS SES EMAIL
+// ──────────────────────────────────────────────────
+
+/**
+ * Build HTML email body with all submitted application details.
+ */
+function buildEmailHtml_(formData, appId, timestamp) {
+  var e = function(s) { return s == null ? '' : String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); };
+  var row = function(label, val) { return '<tr><td style="padding:6px 12px;font-size:12px;color:#666;white-space:nowrap;border-bottom:1px solid #f0f0f0">' + e(label) + '</td><td style="padding:6px 12px;font-size:13px;font-weight:600;color:#1a1a1a;border-bottom:1px solid #f0f0f0">' + e(val || '—') + '</td></tr>'; };
+  var section = function(title) { return '<tr><td colspan="2" style="padding:14px 12px 6px;font-size:11px;font-weight:700;color:#222595;text-transform:uppercase;letter-spacing:1.2px;border-bottom:2px solid #222595">' + e(title) + '</td></tr>'; };
+
+  var h = '';
+  h += '<div style="max-width:600px;margin:0 auto;font-family:\'Segoe UI\',Arial,sans-serif;background:#fff">';
+
+  // Header
+  h += '<div style="background:#222595;padding:24px 32px;text-align:center">';
+  h += '<h1 style="margin:0;font-size:20px;color:#fff;letter-spacing:.5px">Jobs Application Center</h1>';
+  h += '<p style="margin:6px 0 0;font-size:12px;color:rgba(255,255,255,.8)">Application Confirmation</p>';
+  h += '</div>';
+
+  // Application ID banner
+  h += '<div style="background:#f4f4ff;padding:16px 32px;text-align:center;border-bottom:1px solid #d0d1f0">';
+  h += '<div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#666;font-weight:700">Your Application ID</div>';
+  h += '<div style="font-size:20px;font-weight:700;color:#222595;letter-spacing:.5px;margin-top:4px">' + e(appId) + '</div>';
+  h += '<div style="font-size:11px;color:#999;margin-top:4px">Submitted: ' + e(timestamp) + '</div>';
+  h += '</div>';
+
+  // Thank you message
+  h += '<div style="padding:20px 32px;font-size:13px;color:#333;line-height:1.6">';
+  h += 'Dear <strong>' + e(formData.fullName) + '</strong>,<br><br>';
+  h += 'Thank you for submitting your application. Our team will review your details and reach out to you. Below is a summary of your submitted information for your records.';
+  h += '</div>';
+
+  // Details table
+  h += '<div style="padding:0 32px 24px">';
+  h += '<table style="width:100%;border-collapse:collapse">';
+
+  h += section('Position Details');
+  h += row('Location', formData.location);
+  h += row('Position', formData.position);
+
+  h += section('Personal Information');
+  h += row('Full Name', formData.fullName);
+  h += row('Age', formData.age ? formData.age + ' years' : '');
+  h += row('Gender', formData.gender);
+  h += row('Highest Education Level', formData.educationLevel);
+  h += row('Education Relevant to Applied Field', formData.educationRelevant);
+  h += row('Current City', formData.currentCity);
+  h += row('Address', formData.address);
+  h += row('Distance from Job Location', formData.distanceKm ? formData.distanceKm + ' KM' : '');
+
+  h += section('Contact Details');
+  h += row('Mobile Number', formData.mobileNumber);
+  h += row('Email ID', formData.email);
+
+  h += section('Professional Details');
+  h += row('Work Experience (relevant)', formData.workExperience != null ? formData.workExperience + ' years' : '');
+  h += row('Current Company', formData.currentCompany);
+  h += row('Position in Current Company', formData.positionInCurrentCompany);
+  h += row('Job Changes in Last 10 Years', formData.jobChanges != null ? String(formData.jobChanges) : '');
+  h += row('Notice Period', formData.noticePeriod != null ? formData.noticePeriod + ' days' : '');
+  if (formData.currentCtc != null) {
+    h += '<tr><td style="padding:6px 12px;font-size:12px;color:#666;white-space:nowrap;border-bottom:1px solid #f0f0f0">' + e('Current CTC') + '</td><td style="padding:6px 12px;font-size:13px;font-weight:600;color:#1a1a1a;border-bottom:1px solid #f0f0f0">&#8377; ' + e(formData.currentCtc) + ' Lakhs</td></tr>';
+  } else { h += row('Current CTC', ''); }
+  if (formData.expectedCtc != null) {
+    h += '<tr><td style="padding:6px 12px;font-size:12px;color:#666;white-space:nowrap;border-bottom:1px solid #f0f0f0">' + e('Expected CTC') + '</td><td style="padding:6px 12px;font-size:13px;font-weight:600;color:#1a1a1a;border-bottom:1px solid #f0f0f0">&#8377; ' + e(formData.expectedCtc) + ' Lakhs</td></tr>';
+  } else { h += row('Expected CTC', ''); }
+
+  if (formData.referralName || formData.referralId) {
+    h += section('Referral Details');
+    h += row('Referral Employee Name', formData.referralName);
+    h += row('Referral Employee ID', formData.referralId);
+  }
+
+  h += section('Declaration');
+  h += row('Status', formData.declaration ? 'Accepted' : 'Not accepted');
+
+  h += '</table></div>';
+
+  // Footer
+  h += '<div style="background:#f8f8f8;padding:16px 32px;text-align:center;font-size:10px;color:#999;border-top:1px solid #e0e0e0">';
+  h += 'This is an automated confirmation email. Please retain this for your records.<br>';
+  h += 'If you did not submit this application, please disregard this email.';
+  h += '</div>';
+
+  h += '</div>';
+  return h;
+}
+
+/**
+ * Build a raw MIME email with HTML body and optional file attachment.
+ */
+function buildRawMime_(from, to, subject, htmlBody, attachmentBlob, attachmentName) {
+  var boundary = '====BOUNDARY_' + Utilities.getUuid().replace(/-/g, '') + '====';
+  var mime = '';
+
+  mime += 'From: ' + from + '\r\n';
+  mime += 'To: ' + to + '\r\n';
+  mime += 'Subject: ' + subject + '\r\n';
+  mime += 'MIME-Version: 1.0\r\n';
+  mime += 'Content-Type: multipart/mixed; boundary="' + boundary + '"\r\n\r\n';
+
+  // HTML part
+  mime += '--' + boundary + '\r\n';
+  mime += 'Content-Type: text/html; charset="UTF-8"\r\n';
+  mime += 'Content-Transfer-Encoding: 7bit\r\n\r\n';
+  mime += htmlBody + '\r\n\r\n';
+
+  // Attachment part (if present)
+  if (attachmentBlob && attachmentName) {
+    var b64 = Utilities.base64Encode(attachmentBlob.getBytes());
+    // Split base64 into 76-char lines for MIME compliance
+    var lines = [];
+    for (var i = 0; i < b64.length; i += 76) {
+      lines.push(b64.substring(i, i + 76));
+    }
+    mime += '--' + boundary + '\r\n';
+    mime += 'Content-Type: ' + attachmentBlob.getContentType() + '; name="' + attachmentName + '"\r\n';
+    mime += 'Content-Disposition: attachment; filename="' + attachmentName + '"\r\n';
+    mime += 'Content-Transfer-Encoding: base64\r\n\r\n';
+    mime += lines.join('\r\n') + '\r\n\r\n';
+  }
+
+  mime += '--' + boundary + '--\r\n';
+  return mime;
+}
+
+/**
+ * Send confirmation email via AWS SES (SendRawEmail).
+ * Fails silently — email errors never block form submission.
+ */
+function sendConfirmationEmail_(formData, appId, timestamp, resumeBlob, resumeFileName) {
+  var accessKey = getAwsAccessKey_();
+  var secretKey = getAwsSecretKey_();
+  var region = getAwsRegion_();
+  var senderEmail = getSesSenderEmail_();
+
+  if (!accessKey || !secretKey || !senderEmail) {
+    Logger.log('SES not configured — skipping confirmation email for ' + appId);
+    return;
+  }
+
+  var from = '"Jobs Application Center" <' + senderEmail + '>';
+  var to = formData.email;
+  var subject = 'Application Received - ' + appId;
+
+  var htmlBody = buildEmailHtml_(formData, appId, timestamp);
+  var rawMime = buildRawMime_(from, to, subject, htmlBody, resumeBlob, resumeFileName);
+
+  // Base64-encode the raw MIME for SES API
+  var rawB64 = Utilities.base64Encode(Utilities.newBlob(rawMime).getBytes());
+
+  var host = 'email.' + region + '.amazonaws.com';
+  var path = '/v2/email/outbound-emails';
+  var payload = JSON.stringify({ Content: { Raw: { Data: rawB64 } } });
+
+  var sig = signAwsRequest_('POST', host, path, payload, region, 'ses', accessKey, secretKey);
+
+  var options = {
+    method: 'post',
+    contentType: 'application/json',
+    headers: {
+      'Authorization': sig.authorization,
+      'x-amz-date': sig.amzDate,
+      'x-amz-content-sha256': sig.payloadHash
+    },
+    payload: payload,
+    muteHttpExceptions: true
+  };
+
+  try {
+    var resp = UrlFetchApp.fetch('https://' + host + path, options);
+    var code = resp.getResponseCode();
+    if (code >= 200 && code < 300) {
+      Logger.log('Confirmation email sent to ' + to + ' for ' + appId);
+    } else {
+      Logger.log('SES error (' + code + ') for ' + appId + ': ' + resp.getContentText());
+    }
+  } catch (e) {
+    Logger.log('SES request failed for ' + appId + ': ' + e.message);
+  }
 }
 
 // ──────────────────────────────────────────────────
@@ -258,6 +516,7 @@ function submitApplication(formData, fileData, fileName, mimeType) {
   var appId = generateApplicationId_();
   var ts = new Date();
   var resumeUrl = '—', resumeFn = '—';
+  var emailBlob = null; // Resume blob for email attachment
 
   if (fileData && fileName) {
     var ext = fileName.split('.').pop().toLowerCase();
@@ -265,6 +524,7 @@ function submitApplication(formData, fileData, fileName, mimeType) {
     var bytes = Utilities.base64Decode(fileData);
     if (bytes.length / (1024 * 1024) > CONFIG.MAX_FILE_SIZE_MB) throw new Error('File exceeds ' + CONFIG.MAX_FILE_SIZE_MB + ' MB.');
     var blob = Utilities.newBlob(bytes, mimeType, fileName);
+    emailBlob = Utilities.newBlob(bytes, mimeType, fileName); // Separate blob for email
     var folder = getResumeFolder_();
     var safeName = formData.fullName.replace(/[^a-zA-Z0-9]/g, '_');
     var ufn = appId + '_' + safeName + '.' + ext;
@@ -295,7 +555,7 @@ function submitApplication(formData, fileData, fileName, mimeType) {
   }
 
   setVal('Application ID', appId);
-  setVal('Timestamp', ts);
+  setVal('Timestamp', Utilities.formatDate(ts, Session.getScriptTimeZone(), 'dd/MM/yyyy hh:mm:ss a'));
   setVal('Application Status', 'New');
   setVal('Location', formData.location);
   setVal('Position', formData.position);
@@ -331,10 +591,22 @@ function submitApplication(formData, fileData, fileName, mimeType) {
     setVal('Resume Link', '—');
   }
 
+  // CRITICAL: Flush all pending sheet writes BEFORE email (email can be slow/fail;
+  // without flush, queued setValue/setFormula calls may be lost on timeout)
+  SpreadsheetApp.flush();
+
   // Store a one-time token for this application (allows resume access without passkey)
   var token = Utilities.getUuid();
   var cache = CacheService.getScriptCache();
   cache.put('resume_token_' + appId, token, 3600); // Valid for 1 hour
+
+  // Send confirmation email via AWS SES (non-blocking — failure won't affect submission)
+  var timestampStr = Utilities.formatDate(ts, Session.getScriptTimeZone(), 'dd/MM/yyyy hh:mm:ss a');
+  try {
+    sendConfirmationEmail_(formData, appId, timestampStr, emailBlob, emailBlob ? fileName : null);
+  } catch (e) {
+    Logger.log('Confirmation email failed for ' + appId + ': ' + e.message);
+  }
 
   return { success: true, applicationId: appId, resumeToken: token };
 }
@@ -425,7 +697,7 @@ function verifyAndGetApplication(appId, passkey) {
           var match = formula.match(/HYPERLINK\("([^"]+)"/);
           if (match) val = match[1];
         }
-        if (val instanceof Date) val = Utilities.formatDate(val, Session.getScriptTimeZone(), 'dd-MMM-yyyy hh:mm a');
+        if (val instanceof Date) val = Utilities.formatDate(val, Session.getScriptTimeZone(), 'dd/MM/yyyy hh:mm:ss a');
         result[key] = val !== null && val !== undefined ? val.toString() : '';
       }
       if (result['Location']) result['Office Address'] = getOfficeAddress(result['Location']);
@@ -486,4 +758,63 @@ function setupResponseSheet() {
     Logger.log('Responses sheet already exists. No changes made.');
     Logger.log('To add new columns to an existing sheet, add them manually to preserve data.');
   }
+}
+
+/**
+ * ONE-TIME REPAIR: Finds rows where Resume File Name exists but Resume Link is blank,
+ * searches the resume Drive folder for the matching file, and writes the HYPERLINK formula.
+ *
+ * Run this manually from the Apps Script editor to fix rows affected by the missing flush() bug.
+ * Safe to run multiple times — only touches rows that need repair.
+ */
+function repairMissingResumeLinks() {
+  var ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+  var sh = ss.getSheetByName(CONFIG.RESPONSES_SHEET_NAME);
+  if (!sh) { Logger.log('Responses sheet not found.'); return; }
+
+  var colMap = getColumnMap_(sh);
+  var fnCol = colMap['Resume File Name'];
+  var linkCol = colMap['Resume Link'];
+  var idCol = colMap['Application ID'];
+  if (!fnCol || !linkCol || !idCol) {
+    Logger.log('Required columns not found. Check headers: Resume File Name, Resume Link, Application ID');
+    return;
+  }
+
+  var lr = sh.getLastRow();
+  if (lr < 2) { Logger.log('No data rows.'); return; }
+
+  var fileNames = sh.getRange(2, fnCol, lr - 1, 1).getValues();
+  var links = sh.getRange(2, linkCol, lr - 1, 1).getValues();
+  var formulas = sh.getRange(2, linkCol, lr - 1, 1).getFormulas();
+  var appIds = sh.getRange(2, idCol, lr - 1, 1).getValues();
+
+  var folder = getResumeFolder_();
+  var repaired = 0;
+
+  for (var i = 0; i < fileNames.length; i++) {
+    var fn = fileNames[i][0] ? fileNames[i][0].toString().trim() : '';
+    var linkVal = links[i][0] ? links[i][0].toString().trim() : '';
+    var linkFormula = formulas[i][0] || '';
+
+    // Skip if no resume was uploaded, or link already exists
+    if (!fn || fn === '—') continue;
+    if (linkFormula || (linkVal && linkVal !== '—' && linkVal.indexOf('http') === 0)) continue;
+
+    // Resume File Name exists but Resume Link is blank — search Drive folder
+    var files = folder.getFilesByName(fn);
+    if (files.hasNext()) {
+      var file = files.next();
+      var url = file.getUrl();
+      var row = i + 2; // 1-based, skip header
+      sh.getRange(row, linkCol).setFormula('=HYPERLINK("' + url + '","Open Resume")');
+      repaired++;
+      Logger.log('REPAIRED: Row ' + row + ' | ' + appIds[i][0] + ' | ' + fn + ' → ' + url);
+    } else {
+      Logger.log('FILE NOT FOUND in folder: ' + fn + ' (Row ' + (i + 2) + ', ' + appIds[i][0] + ')');
+    }
+  }
+
+  SpreadsheetApp.flush();
+  Logger.log('Repair complete. Fixed ' + repaired + ' row(s).');
 }

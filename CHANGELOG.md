@@ -1,5 +1,61 @@
 # Changelog
 
+## [2.1.0] — 2026-03-23
+
+### New Feature
+- **Automated confirmation email via AWS SES** — on successful submission, candidate receives a professional HTML email with:
+  - All submitted details (position, personal, contact, professional, referral, declaration)
+  - Uploaded resume attached (PDF/DOC/DOCX)
+  - Custom sender name ("Jobs Application Center")
+  - AWS SigV4 request signing implemented in pure Apps Script (no SDK)
+- **Non-blocking**: email failure never prevents form submission — errors are caught and logged
+- **Graceful skip**: if AWS SES credentials are not configured, email is silently skipped
+
+### Security
+- AWS credentials (Access Key ID, Secret Access Key, Region, Sender Email) stored securely in Script Properties via `initializeSecrets()`
+- Private helper functions (`sendConfirmationEmail_()`, `signAwsRequest_()`, etc.) not exposed to client
+
+### Bug Fixes
+- **Resume link missing for recent submissions** — added `SpreadsheetApp.flush()` after all sheet writes and before email send. Sheet `setValue()`/`setFormula()` calls are batched by Apps Script; the slow email operation (base64 encode + SES HTTP request) could cause timeout, losing unflushed writes including the HYPERLINK formula for Resume Link
+- **Added `repairMissingResumeLinks()` utility** — one-time repair function that scans for rows where Resume File Name exists but Resume Link is blank, finds the matching file in Drive, and writes the HYPERLINK formula. Safe to run multiple times
+- **Email subject uses ASCII only** — replaced Unicode em dash (`\u2014`) with plain dash to comply with MIME 7-bit header requirement
+- **Email rupee symbol (₹) escaped correctly** — `&#8377;` placed outside `e()` escape function in CTC rows to prevent double-escaping (same pattern as print functions)
+
+### Documentation
+- Updated CLAUDE.md: added AWS SES config section, email flow description, security notes, gotchas #13-16
+- Updated README.md: added confirmation email feature, AWS SES setup instructions (Step 5), security table entry
+- Updated CHANGELOG.md: v2.1.0 release entry
+
+## [2.0.2] — 2026-03-20
+
+### Improvements
+- **All brand, person, and account references removed** from source code and documentation — fully generic public release
+- **DOCUMENTATION.html** added — self-contained, professional, printable HTML version of enterprise technical documentation with styled tables, code blocks, status badges, and print-optimized CSS
+- Branding section (Section 8) rewritten with generic "Your Company Name" placeholders for custom deployment
+
+### Documentation
+- Updated DOCUMENTATION.md: removed all company-specific branding references, anonymized repository info
+- Updated DOCUMENTATION.html: matching cleanup, commit hash references removed
+- Updated CLAUDE.md: removed branding-specific references
+- Added DOCUMENTATION.html to .gitignore (local documentation, not committed)
+
+## [2.0.1] — 2026-03-20
+
+### Bug Fixes
+- **Timestamp format standardized** to `DD/MM/YYYY hh:mm:ss AM/PM` everywhere — Google Sheet, Applicant Print, HR Print, and success screen. Previously used locale-dependent `toLocaleString()` on client and raw `Date` object on server
+- **Rupee symbol (₹) rendering fixed** in HR Print — `&#8377;` was being double-escaped by `escHtml()`, displaying as literal `&#8377;` text instead of the ₹ symbol. Fixed by placing the HTML entity outside the escape function
+- **Status badges overlapping names fixed** in HR Print — replaced `margin-top:-20px` negative-margin hack with inline `fldBadge()` helper across all hiring chronology sections (HR, Screener, Hiring Manager, Joining Status)
+- **Joining Application Form Link now renders as a clickable link** in HR Print — was previously passed through `fld()` which escaped the URL as plain text
+- **All URL fields render as clickable links** in HR Print — new `fldLink()` helper auto-detects URLs and renders them as styled `<a>` tags with ↗ icon; applies to Resume Link and Joining Application Form Link
+
+### Improvements
+- Added `fldBadge()` helper — renders field with color-coded status badge inline
+- Added `fldLink()` helper — renders field value as clickable link if URL, plain text otherwise (truncates long URLs at 55 chars)
+
+### Documentation
+- Updated CLAUDE.md: Form.html line count (~872), timestamp format note, rupee symbol gotcha
+- Updated README.md: timestamp format in feature list and sheet layout table
+
 ## [2.0.0] — 2026-03-20
 
 ### Breaking Changes
@@ -19,7 +75,7 @@
 - HR Status (Selected/Rejected/Flagged/On Hold)
 - Screener Name, Screener Comment, Screener Status
 - Hiring Manager Name, Hiring Manager Comment, Hiring Manager Status
-- Final Hiring Status, Final Hiring Comment
+- Final Hiring Status (Selected/Rejected/Flagged/On Hold), Final Hiring Comment
 - Final Joining Status (Joined/Offer Rejected/On Hold)
 - Employee ID, Joining Application Form Link
 - Application Status expanded: New / In-Progress / Offer Released / Offer Rejected / Joined as Employee / Flagged / Rejected / On Hold
