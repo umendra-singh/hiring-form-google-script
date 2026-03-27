@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.1.1] — 2026-03-27
+
+### Bug Fixes
+- **Email header branding location marked** — added `Branding location #4` comment at Code.gs line 202 for deployment customization. All text inside the blue header block must use explicit `color:#fff` (email clients do not inherit colors)
+
+### Documentation
+- Email branding location (#4) documented in CLAUDE.md
+
 ## [2.1.0] — 2026-03-23
 
 ### New Feature

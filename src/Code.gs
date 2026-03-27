@@ -199,7 +199,7 @@ function buildEmailHtml_(formData, appId, timestamp) {
   var h = '';
   h += '<div style="max-width:600px;margin:0 auto;font-family:\'Segoe UI\',Arial,sans-serif;background:#fff">';
 
-  // Header
+  // Header (Branding location #4 — email)
   h += '<div style="background:#222595;padding:24px 32px;text-align:center">';
   h += '<h1 style="margin:0;font-size:20px;color:#fff;letter-spacing:.5px">Jobs Application Center</h1>';
   h += '<p style="margin:6px 0 0;font-size:12px;color:rgba(255,255,255,.8)">Application Confirmation</p>';
