@@ -1,12 +1,17 @@
 # Changelog
 
-## [2.1.1] — 2026-03-27
+## [2.1.1] — 2026-03-29
 
 ### Bug Fixes
 - **Email header branding location marked** — added `Branding location #4` comment at Code.gs line 202 for deployment customization. All text inside the blue header block must use explicit `color:#fff` (email clients do not inherit colors)
 
+### Security
+- **AWS IAM policy documented** — recommended least-privilege IAM policy for SES added to CLAUDE.md and DOCUMENTATION.md with 5 security layers: action restriction, resource lock, FromAddress condition, HTTPS enforcement, explicit deny
+
 ### Documentation
-- Email branding location (#4) documented in CLAUDE.md
+- Added recommended AWS IAM policy (least privilege) with security layer breakdown to CLAUDE.md, DOCUMENTATION.md, DOCUMENTATION.html
+- Email branding location (#4 and #5) documented across all documentation files
+- All brand, person, entity, and credential references verified clean
 
 ## [2.1.0] — 2026-03-23
 

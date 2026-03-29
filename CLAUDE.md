@@ -199,7 +199,53 @@ Key decisions:
 
 ## Required AWS Services (for email)
 - AWS SES (Simple Email Service) — sender email/domain must be verified
-- IAM user with `ses:SendRawEmail` permission
+- IAM user with `ses:SendRawEmail` + `ses:SendEmail` permissions
+
+### Recommended IAM Policy (Least Privilege)
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowSendFromVerifiedIdentityOnly",
+      "Effect": "Allow",
+      "Action": [
+        "ses:SendRawEmail",
+        "ses:SendEmail"
+      ],
+      "Resource": [
+        "arn:aws:ses:REGION:ACCOUNT_ID:identity/sender@yourdomain.com",
+        "arn:aws:ses:REGION:ACCOUNT_ID:identity/yourdomain.com"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "ses:FromAddress": "sender@yourdomain.com"
+        },
+        "Bool": {
+          "aws:SecureTransport": "true"
+        }
+      }
+    },
+    {
+      "Sid": "DenyEverythingElse",
+      "Effect": "Deny",
+      "NotAction": [
+        "ses:SendRawEmail",
+        "ses:SendEmail"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+Replace `REGION`, `ACCOUNT_ID`, and `sender@yourdomain.com` with your values.
+
+**Security layers:**
+- Only `SendRawEmail` + `SendEmail` — no list/manage/delete access
+- Resource locked to one verified identity + domain
+- `FromAddress` condition — keys can only send as this exact address
+- HTTPS enforced — blocks plain HTTP
+- Explicit Deny on all other SES actions
 
 ## Deployment
 1. Fill `SPREADSHEET_ID` and `RESUME_FOLDER_ID` in Code.gs
